@@ -53,6 +53,8 @@ class MVLinear(nn.Module):
         return torch.einsum("bm...i, nmi->bn...i", input, weight)
 
     def forward(self, input):
+        # import pdb
+        # pdb.set_trace()
         result = self._forward(input)
 
         if self.bias is not None:

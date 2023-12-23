@@ -9,6 +9,8 @@ import yaml
 
 from ..utils.load_module import load_module
 
+import pdb
+
 EXCEPTIONS = {"weight_decay": float}
 
 
@@ -130,6 +132,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
 
+    # import pdb
+    # pdb.set_trace()
     for k in config_dict:
         if "module" in config_dict[k].keys():
             module = load_module(config_dict[k]["module"])

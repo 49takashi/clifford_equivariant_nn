@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from models.modules.utils import unsqueeze_like
+from clifford_equivariant_nn.models.modules.utils import unsqueeze_like
 
 EPS = 1e-6
 

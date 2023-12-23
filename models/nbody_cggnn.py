@@ -2,12 +2,16 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from algebra.cliffordalgebra import CliffordAlgebra
-from engineer.metrics.metrics import Loss, MetricCollection
-from models.modules.gp import SteerableGeometricProductLayer
-from models.modules.linear import MVLinear
-from models.modules.mvlayernorm import MVLayerNorm
-from models.modules.mvsilu import MVSiLU
+# import sys, os
+# sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
+# sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..'))
+
+from clifford_equivariant_nn.algebra.cliffordalgebra import CliffordAlgebra
+from clifford_equivariant_nn.engineer.metrics.metrics import Loss, MetricCollection
+from clifford_equivariant_nn.models.modules.gp import SteerableGeometricProductLayer
+from clifford_equivariant_nn.models.modules.linear import MVLinear
+from clifford_equivariant_nn.models.modules.mvlayernorm import MVLayerNorm
+from clifford_equivariant_nn.models.modules.mvsilu import MVSiLU
 
 
 

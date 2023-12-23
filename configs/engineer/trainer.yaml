@@ -1,2 +1,2 @@
 trainer:
-  module: engineer.Trainer
+  module: clifford_equivariant_nn.engineer.Trainer

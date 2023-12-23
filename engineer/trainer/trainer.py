@@ -9,10 +9,18 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader
+import shutil
+import numpy as np
 
 from ..callbacks.checkpoint import Checkpoint
 from ..loggers.loggers import ConsoleLogger
 
+import sys, os
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..'))
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..', '..'))
+
+import pdb
 
 def human_format(num: float):
     num = float("{:.3g}".format(num))
@@ -24,12 +32,22 @@ def human_format(num: float):
         "{:f}".format(num).rstrip("0").rstrip("."), ["", "K", "M", "B", "T"][magnitude]
     )
 
+# def save_ckp(state, is_best, checkpoint_dir, best_model_dir):
+# refer https://medium.com/analytics-vidhya/saving-and-loading-your-model-to-resume-training-in-pytorch-cb687352fa61
+def save_ckp(state, epoch):
+    f_path = checkpoint_dir / 'checkpoint.pt'"./results/model_{:06d}.pt".format(self.current_epoch)
+    torch.save(state, f_path)
+    # if is_best:
+    #     best_fpath = best_model_dir / 'best_model.pt'
+    #     shutil.copyfile(f_path, best_fpath)
 
 def count_parameters(module: nn.Module):
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
 def to_device(input, device, detach=True):
+    if type(input) == int:
+        return input
     if isinstance(input, torch.Tensor):
         input = input.to(device)
         if detach:
@@ -127,6 +145,7 @@ class Trainer:
         log_interval=256,
         checkpoint=None,
         test_only=False,
+        data_type=None,
     ):
         self.callbacks = callbacks
 
@@ -168,6 +187,9 @@ class Trainer:
         self.print_interval = print_interval
         self.log_interval = log_interval
         self.test_only = test_only
+        assert data_type in ["nbody_multi", "protein"]
+        self.data_type = data_type
+        
         self.is_distributed = dist.is_initialized()
 
         self.global_step = 0
@@ -176,6 +198,8 @@ class Trainer:
         self.should_raise = None
         self.should_test = False
         self.device = None
+
+        self.test_log = []
 
     def _add_prefix(
         self, metrics: dict[str, torch.Tensor], prefix: str
@@ -217,6 +241,7 @@ class Trainer:
         model.eval()
 
         num_iterations = int(min(len(test_loader), self.limit_val_batches))
+        print("num iterations: ", num_iterations, self.global_step)
         t0 = time.time()
 
         if self.is_distributed:
@@ -252,9 +277,17 @@ class Trainer:
 
         if self.is_distributed:
             metrics = model.module.test_metrics.compute()
+            if not validation and self.data_type == "protein":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                with open('test_log_layer4_unit14.npy', 'wb') as f:
+                    np.save(f, np.array(self.test_log))
             model.module.test_metrics.reset()
         else:
             metrics = model.test_metrics.compute()
+            if not validation and self.data_type == "protein":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                with open('test_log_layer4_unit14.npy', 'wb') as f:
+                    np.save(f, np.array(self.test_log))
             model.test_metrics.reset()
         metrics[f"s_it"] = s_it
 
@@ -287,6 +320,7 @@ class Trainer:
         train_loader,
         val_loader=None,
         test_loader=None,
+        nb_type=None,
     ):
         if hasattr(model, "device"):
             device = model.device
@@ -369,7 +403,52 @@ class Trainer:
                 if self.should_raise is not None:
                     raise self.should_raise
 
+
                 if self.should_stop:
+                    if self.data_type=="nbody_multi":
+                        if type(nb_type)==tuple:
+                            M, aveN, J = nb_type
+                            path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                            torch.save(model.state_dict(), path)
+                        else:
+                            path = "./results/multi_nbody_model_final_temp.pth"
+                            torch.save(model.state_dict(), path)
+                    elif self.data_type=="protein":
+                        path = "./results/protein_model_final_layer4_unit14.pth"
+                        torch.save(model.state_dict(), path)
+
                     break
 
             self.current_epoch += 1
+
+            # if False:
+            #     ### NEED to ADDRESS ###
+            #     # Once after loading a model, the training loss does not decrease
+            #     path = "./results/model_{:06d}.pth".format(self.current_epoch)
+            #     torch.save(model.state_dict(), path)
+            #     from clifford_equivariant_nn.models.nbody_cggnn import NBodyCGGNN
+            #     new_model = NBodyCGGNN()
+            #     new_model.load_state_dict(torch.load(path))
+            #     new_model = new_model.cuda()
+            #     model = new_model
+            #     model.train()
+                
+            #     print("Model Check")
+            #     # for param_tensor, new_param_tensor in zip(model.state_dict(), model.state_dict()):
+            #     #     assert torch.prod(model.state_dict()[param_tensor] == new_model.state_dict()[new_param_tensor]) == 1
+
+            if self.should_stop:
+                if self.data_type=="nbody_multi":
+                    if type(nb_type)==tuple:
+                        M, aveN, J = nb_type
+                        path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                        torch.save(model.state_dict(), path)
+                    else:
+                        path = "./results/multi_nbody_model_final_temp.pth"
+                        torch.save(model.state_dict(), path)
+                elif self.data_type=="protein":
+                    path = "./results/protein_model_final_layer4_unit14.pth"
+                    torch.save(model.state_dict(), path)
+        
+
+
