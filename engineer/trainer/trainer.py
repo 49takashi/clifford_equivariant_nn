@@ -213,7 +213,9 @@ class Trainer:
 
         batch = to_device(batch, self.device)
 
-        loss, outputs = model(batch, self.global_step)
+        # import pdb
+        # pdb.set_trace()
+        loss, outputs = model.loss_after_forward(batch, self.global_step)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -260,7 +262,7 @@ class Trainer:
                 break
 
             batch = to_device(batch, self.device)
-            _, outputs = model(batch, batch_idx)
+            _, outputs = model.loss_after_forward(batch, batch_idx)
 
             if self.is_distributed:
                 model.module.test_metrics.update(**outputs)
@@ -279,15 +281,25 @@ class Trainer:
             metrics = model.module.test_metrics.compute()
             if not validation and self.data_type == "protein":
                 self.test_log.append(metrics["loss"].detach().cpu().numpy())
-                with open('test_log_layer4_unit14.npy', 'wb') as f:
+                with open('test_log_protein_unet_loc_innerlayer3_unit14.npy', 'wb') as f:
                     np.save(f, np.array(self.test_log))
+            elif not validation and self.data_type == "nbody_multi":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                M, aveN, J = self.nb_type
+                with open('test_log_nbody_unet_{}_{}_{}_2layers.npy'.format(M, aveN, J), 'wb') as f:
+                    np.save(f, np.array(self.test_log))            
             model.module.test_metrics.reset()
         else:
             metrics = model.test_metrics.compute()
             if not validation and self.data_type == "protein":
                 self.test_log.append(metrics["loss"].detach().cpu().numpy())
-                with open('test_log_layer4_unit14.npy', 'wb') as f:
+                with open('test_log_protein_unet_loc_innerlayer3_unit14.npy', 'wb') as f:
                     np.save(f, np.array(self.test_log))
+            elif not validation and self.data_type == "nbody_multi":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                M, aveN, J = self.nb_type
+                with open('test_log_nbody_unet_{}_{}_{}_2layers.npy'.format(M, aveN, J), 'wb') as f:
+                    np.save(f, np.array(self.test_log))            
             model.test_metrics.reset()
         metrics[f"s_it"] = s_it
 
@@ -322,6 +334,8 @@ class Trainer:
         test_loader=None,
         nb_type=None,
     ):
+        self.nb_type = nb_type
+        
         if hasattr(model, "device"):
             device = model.device
         else:
@@ -406,16 +420,29 @@ class Trainer:
 
                 if self.should_stop:
                     if self.data_type=="nbody_multi":
-                        if type(nb_type)==tuple:
-                            M, aveN, J = nb_type
-                            path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                        if "UNet" in model.__class__.__name__:
+                            if type(nb_type)==tuple:
+                                M, aveN, J = nb_type
+                                path = "./results/multi_nbody_unetmodel_final_{}_{}_{}.pth".format(M, aveN, J)
+                                torch.save(model.state_dict(), path)
+                            else:
+                                path = "./results/multi_nbody_unetmodel_final_temp.pth"
+                                torch.save(model.state_dict(), path)
+                        else:
+                            if type(nb_type)==tuple:
+                                M, aveN, J = nb_type
+                                path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                                torch.save(model.state_dict(), path)
+                            else:
+                                path = "./results/multi_nbody_model_final_temp.pth"
+                                torch.save(model.state_dict(), path)
+                    elif self.data_type=="protein":
+                        if "UNet" in model.__class__.__name__:
+                            path = "./results/protein_unetmodel_final_loc_innerlayer3_unit14.pth"
                             torch.save(model.state_dict(), path)
                         else:
-                            path = "./results/multi_nbody_model_final_temp.pth"
+                            path = "./results/protein_model_final_layer2_unit14.pth"
                             torch.save(model.state_dict(), path)
-                    elif self.data_type=="protein":
-                        path = "./results/protein_model_final_layer4_unit14.pth"
-                        torch.save(model.state_dict(), path)
 
                     break
 
@@ -439,16 +466,29 @@ class Trainer:
 
             if self.should_stop:
                 if self.data_type=="nbody_multi":
-                    if type(nb_type)==tuple:
-                        M, aveN, J = nb_type
-                        path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                    if "UNet" in model.__class__.__name__:
+                        if type(nb_type)==tuple:
+                            M, aveN, J = nb_type
+                            path = "./results/multi_nbody_unetmodel_final_{}_{}_{}.pth".format(M, aveN, J)
+                            torch.save(model.state_dict(), path)
+                        else:
+                            path = "./results/multi_nbody_unetmodel_final_temp.pth"
+                            torch.save(model.state_dict(), path)
+                    else:
+                        if type(nb_type)==tuple:
+                            M, aveN, J = nb_type
+                            path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                            torch.save(model.state_dict(), path)
+                        else:
+                            path = "./results/multi_nbody_model_final_temp.pth"
+                            torch.save(model.state_dict(), path)                
+                elif self.data_type=="protein":
+                    if "UNet" in model.__class__.__name__:
+                        path = "./results/protein_unetmodel_loc_final_innerlayer3_unit14.pth"
                         torch.save(model.state_dict(), path)
                     else:
-                        path = "./results/multi_nbody_model_final_temp.pth"
+                        path = "./results/protein_model_final_layer2_unit14.pth"
                         torch.save(model.state_dict(), path)
-                elif self.data_type=="protein":
-                    path = "./results/protein_model_final_layer4_unit14.pth"
-                    torch.save(model.state_dict(), path)
         
 
 
