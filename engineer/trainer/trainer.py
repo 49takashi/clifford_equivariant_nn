@@ -146,6 +146,7 @@ class Trainer:
         checkpoint=None,
         test_only=False,
         data_type=None,
+        action=None,
     ):
         self.callbacks = callbacks
 
@@ -187,8 +188,14 @@ class Trainer:
         self.print_interval = print_interval
         self.log_interval = log_interval
         self.test_only = test_only
-        assert data_type in ["nbody_multi", "protein"]
+        assert data_type in ["nbody_multi", "protein", "motioncap", "md17"]
         self.data_type = data_type
+        if data_type == "motioncap":
+            assert action in ["run", "walk"]
+            self.action = action
+
+        self.is_stacked=False
+        self.stack_adjacent = None
         
         self.is_distributed = dist.is_initialized()
 
@@ -213,9 +220,13 @@ class Trainer:
 
         batch = to_device(batch, self.device)
 
-        # import pdb
-        # pdb.set_trace()
-        loss, outputs = model.loss_after_forward(batch, self.global_step)
+        if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
+            loss, mse_loss, mse_outputs = model.loss_after_forward(batch, self.global_step)
+        # elif "NBodyCGGNN" in model.__class__.__name__:
+        #     loss, mse_outputs = model.forward(batch, self.global_step)
+        else:    
+            loss, mse_outputs = model.loss_after_forward(batch, self.global_step)
+            # print(loss)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -225,12 +236,15 @@ class Trainer:
             self.should_raise = ValueError("Loss is NaN.")
 
         if self.is_distributed:
-            model.module.train_metrics.update(**outputs)
+            model.module.train_metrics.update(**mse_outputs)
         else:
-            model.train_metrics.update(**outputs)
+            model.train_metrics.update(**mse_outputs)
 
         if self.global_step % self.print_interval == 0:
-            print(f"Step: {self.global_step} (Training) Loss: {loss:.4f}")
+            if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
+                print(f"Step: {self.global_step} (Training) FrobeniusLoss: {loss:.4f} MSELoss: {mse_loss:.4f}")
+            else:    
+                print(f"Step: {self.global_step} (Training) MSELoss: {loss:.4f}")
 
     @torch.no_grad()
     def test_loop(
@@ -262,18 +276,31 @@ class Trainer:
                 break
 
             batch = to_device(batch, self.device)
-            _, outputs = model.loss_after_forward(batch, batch_idx)
+            if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
+                eval_loss, eval_outputs, adjs = model.eval_after_forward(batch, batch_idx)
+                loss, _, _ = model.loss_after_forward(batch, batch_idx)
+            else:    
+                loss, outputs = model.loss_after_forward(batch, batch_idx)
 
-            if self.is_distributed:
-                model.module.test_metrics.update(**outputs)
+            if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):       
+                if self.is_distributed:
+                    model.module.test_metrics.update(**eval_outputs)
+                else:
+                    model.test_metrics.update(**eval_outputs)
             else:
-                model.test_metrics.update(**outputs)
+                if self.is_distributed:
+                    model.module.test_metrics.update(**outputs)
+                else:
+                    model.test_metrics.update(**outputs)
 
             if batch_idx % self.print_interval == 0:
                 print(
                     f"Step: {self.global_step} ({print_str}) Batch: {batch_idx} / {num_iterations}"
                 )
-
+                if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
+                    print("MSELoss, FrobeniousLoss: ", eval_loss, loss)
+                    # print(adjs[0][0], adjs[1][0])
+                    
         t1 = time.time()
         s_it = (t1 - t0) / num_iterations
 
@@ -281,25 +308,264 @@ class Trainer:
             metrics = model.module.test_metrics.compute()
             if not validation and self.data_type == "protein":
                 self.test_log.append(metrics["loss"].detach().cpu().numpy())
-                with open('test_log_protein_unet_loc_innerlayer3_unit14.npy', 'wb') as f:
+                with open('test_log_protein_denseunet_loc_innerlayer2_unit14_cat_dist_cl20_lam1_decay-8.npy', 'wb') as f:
                     np.save(f, np.array(self.test_log))
+                    
+                if not self.is_stacked:
+                    self.is_stacked = True
+                    self.stack_adjacent = torch.stack(
+                        (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()),
+                        dim=-1).numpy()    
+                else:
+                    self.stack_adjacent = np.concatenate((
+                        self.stack_adjacent, 
+                        torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                    ), axis=-1)    
+                with open('test_adj_protein_denseunet_loc_innerlayer2_unit14_cat_dist_cl20_lam1_decay-8.npy', 'wb') as f:
+                    np.save(f, self.stack_adjacent)
             elif not validation and self.data_type == "nbody_multi":
                 self.test_log.append(metrics["loss"].detach().cpu().numpy())
                 M, aveN, J = self.nb_type
-                with open('test_log_nbody_unet_{}_{}_{}_2layers.npy'.format(M, aveN, J), 'wb') as f:
-                    np.save(f, np.array(self.test_log))            
+                if "Dense" in model.__class__.__name__:
+                    results_path = model.test_result_path
+                    inner_layers = model.inner_layers
+                    num_clusters = model.num_clusters
+                    inner_hidden_channels = model.inner_hidden_channels
+                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_{}.npy').format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                    if not self.is_stacked:
+                        self.is_stacked = True
+                        self.stack_adjacent = torch.stack(
+                            (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                        ).numpy()    
+                    else:
+                        self.stack_adjacent = np.concatenate((
+                            self.stack_adjacent, 
+                            torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                        ), axis=-1)    
+                    with open((results_path + 'test_adj_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_{}.npy').format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                        np.save(f, self.stack_adjacent)
+                elif "UNet" in model.__class__.__name__:    
+                    sum_res = model.sum_res
+                    out_hidden = model.hidden_channels
+                    pool = int(model.pool_ratios[0] * 10)
+                    n_layers = model.n_layers
+                    depth = model.depth
+                    inner_hidden = model.inner_hidden_channels
+                    results_path = model.test_result_path
+                    silu = model.is_clact
+                    is_normal = model.is_normal
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
+                    with open( ( results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal), 'wb') as f:
+                        np.save(f, np.array(self.test_log))   
+                else:    
+                    M, aveN, J = self.nb_type
+                    out_hidden = model.hidden_features
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)                    
+                    with open( ( results_path +'test_log_nbody_standard_{}_{}_{}_outhid_{}_{}layers.npy').format(M, aveN, J, out_hidden, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))   
+            elif not validation and self.data_type == "motioncap":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                if "Dense" in model.__class__.__name__:
+                    results_path = model.test_result_path
+                    inner_layers = model.inner_layers
+                    num_clusters = model.num_clusters
+                    inner_hidden_channels = model.inner_hidden_channels
+                    with open((results_path + 'test_log_motioncap_denseunet_{}layers_cl{}_hidden{}_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                    if not self.is_stacked:
+                        self.is_stacked = True
+                        self.stack_adjacent = torch.stack(
+                            (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                        ).numpy()    
+                    else:
+                        self.stack_adjacent = np.concatenate((
+                            self.stack_adjacent, 
+                            torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                        ), axis=-1)    
+                    with open((results_path + 'test_adj_motioncap_denseunet_{}layers_cl{}_hidden{}_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                        np.save(f, self.stack_adjacent)
+                elif "UNet" in model.__class__.__name__:    
+                    sum_res = model.sum_res
+                    out_hidden = model.hidden_channels
+                    pool = int(model.pool_ratios[0] * 10)
+                    n_layers = model.n_layers
+                    depth = model.depth
+                    inner_hidden = model.inner_hidden_channels
+                    results_path = model.test_result_path
+                    with open((results_path +'test_log_motioncap_unet_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}.npy').format(self.action, out_hidden, n_layers, inner_hidden, sum_res, pool, depth), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                else:
+                    out_hidden = model.hidden_features
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    with open((results_path +'test_log_motioncap_standard_{}_outhid_{}_{}layers.npy').format(self.action, out_hidden, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+            elif not validation and self.data_type == "md17":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                if "Dense" in model.__class__.__name__:
+                    with open('test_log_md17_denseunet_2layers_cl5_hidden14.npy', 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                    if not self.is_stacked:
+                        self.is_stacked = True
+                        self.stack_adjacent = torch.stack(
+                            (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                        ).numpy()    
+                    else:
+                        self.stack_adjacent = np.concatenate((
+                            self.stack_adjacent, 
+                            torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                        ), axis=-1)    
+                    with open('test_adj_md17_denseunet_2layers_cl5_hidden14.npy', 'wb') as f:
+                        np.save(f, self.stack_adjacent)
+                elif "UNet" in model.__class__.__name__:    
+                    with open('test_log_md17_unet_innerlayer3_unit14_ratio05.npy', 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                else:
+                    with open('test_log_md17_standard.npy', 'wb') as f:
+                        np.save(f, np.array(self.test_log))            
             model.module.test_metrics.reset()
         else:
             metrics = model.test_metrics.compute()
             if not validation and self.data_type == "protein":
                 self.test_log.append(metrics["loss"].detach().cpu().numpy())
-                with open('test_log_protein_unet_loc_innerlayer3_unit14.npy', 'wb') as f:
+                with open('test_log_protein_denseunet_loc_innerlayer2_unit14_cat_dist_cl20_lam1_decay-8.npy', 'wb') as f:
+                # with open('test_log_protein_share_layer_layer4_units28.npy', 'wb') as f:        
                     np.save(f, np.array(self.test_log))
+                    
+                if not self.is_stacked:
+                    self.is_stacked = True
+                    self.stack_adjacent = torch.stack(
+                        (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                    ).numpy()    
+                else:
+                    self.stack_adjacent = np.concatenate((
+                        self.stack_adjacent, 
+                        torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                    ), axis=-1)    
+                with open('test_adj_protein_denseunet_loc_innerlayer2_unit14_cat_dist_cl20_lam1_decay-8.npy', 'wb') as f:
+                    np.save(f, self.stack_adjacent)
+                    
             elif not validation and self.data_type == "nbody_multi":
                 self.test_log.append(metrics["loss"].detach().cpu().numpy())
                 M, aveN, J = self.nb_type
-                with open('test_log_nbody_unet_{}_{}_{}_2layers.npy'.format(M, aveN, J), 'wb') as f:
-                    np.save(f, np.array(self.test_log))            
+                if "Dense" in model.__class__.__name__:
+                    results_path = model.test_result_path
+                    inner_layers = model.inner_layers
+                    num_clusters = model.num_clusters
+                    inner_hidden_channels = model.inner_hidden_channels
+                    local_hidden_channels = model.local_hidden_channels
+                    local_hidden_layers = model.local_hidden_layers
+                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                    if not self.is_stacked:
+                        self.is_stacked = True
+                        self.stack_adjacent = torch.stack(
+                            (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                        ).numpy()    
+                    else:
+                        self.stack_adjacent = np.concatenate((
+                            self.stack_adjacent, 
+                            torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                        ), axis=-1)    
+                    with open((results_path + 'test_adj_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.npy').format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels), 'wb') as f:
+                        np.save(f, self.stack_adjacent)
+                elif "UNet" in model.__class__.__name__:    
+                    M, aveN, J = self.nb_type
+                    sum_res = model.sum_res
+                    out_hidden = model.hidden_channels
+                    pool = int(model.pool_ratios[0] * 10)
+                    n_layers = model.n_layers
+                    depth = model.depth
+                    inner_hidden = model.inner_hidden_channels
+                    results_path = model.test_result_path
+                    silu = model.is_clact
+                    is_normal = model.is_normal
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
+                    with open((results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal), 'wb') as f:
+                        np.save(f, np.array(self.test_log))   
+                else:    
+                    M, aveN, J = self.nb_type
+                    out_hidden = model.hidden_features
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)                    
+                    with open( ( results_path +'test_log_nbody_standard_{}_{}_{}_outhid_{}_{}layers.npy').format(M, aveN, J, out_hidden, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))                     
+            elif not validation and self.data_type == "motioncap":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())                
+                if "Dense" in model.__class__.__name__:
+                    results_path = model.test_result_path
+                    inner_layers = model.inner_layers
+                    num_clusters = model.num_clusters
+                    inner_hidden_channels = model.inner_hidden_channels
+                    local_hidden_channels = model.local_hidden_channels
+                    local_hidden_layers = model.local_hidden_layers
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)                    
+                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                    if not self.is_stacked:
+                        self.is_stacked = True
+                        self.stack_adjacent = torch.stack(
+                            (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                        ).numpy()    
+                    else:
+                        self.stack_adjacent = np.concatenate((
+                            self.stack_adjacent, 
+                            torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                        ), axis=-1)    
+                    with open((results_path + 'test_adj_motioncap_denseunet_{}layers_cl{}_hidden{}_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                        np.save(f, self.stack_adjacent)
+                elif "UNet" in model.__class__.__name__:    
+                    sum_res = model.sum_res
+                    out_hidden = model.hidden_channels
+                    pool = int(model.pool_ratios[0] * 10)
+                    n_layers = model.n_layers
+                    depth = model.depth
+                    inner_hidden = model.inner_hidden_channels
+                    results_path = model.test_result_path
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
+                    with open((results_path +'test_log_motioncap_unet_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}.npy').format(self.action, out_hidden, n_layers, inner_hidden, sum_res, pool, depth), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                else:
+                    out_hidden = model.hidden_features
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
+                    with open((results_path +'test_log_motioncap_standard_{}_outhid_{}_{}layers.npy').format(self.action, out_hidden, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))                        
+            elif not validation and self.data_type == "md17":
+                self.test_log.append(metrics["loss"].detach().cpu().numpy())
+                if "Dense" in model.__class__.__name__:
+                    with open('test_log_md17_denseunet_2layers_cl5_hidden14.npy', 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                    if not self.is_stacked:
+                        self.is_stacked = True
+                        self.stack_adjacent = torch.stack(
+                            (adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1
+                        ).numpy()    
+                    else:
+                        self.stack_adjacent = np.concatenate((
+                            self.stack_adjacent, 
+                            torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
+                        ), axis=-1)    
+                    with open('test_adj_md17_denseunet_2layers_cl5_hidden14.npy', 'wb') as f:
+                        np.save(f, self.stack_adjacent)
+                elif "UNet" in model.__class__.__name__:    
+                    with open('test_log_md17_unet_innerlayer3_unit14_ratio05.npy', 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                else:
+                    with open('test_log_md17_standard.npy', 'wb') as f:
+                        np.save(f, np.array(self.test_log)) 
             model.test_metrics.reset()
         metrics[f"s_it"] = s_it
 
@@ -335,7 +601,6 @@ class Trainer:
         nb_type=None,
     ):
         self.nb_type = nb_type
-        
         if hasattr(model, "device"):
             device = model.device
         else:
@@ -420,10 +685,32 @@ class Trainer:
 
                 if self.should_stop:
                     if self.data_type=="nbody_multi":
-                        if "UNet" in model.__class__.__name__:
+                        if "Dense" in model.__class__.__name__:
                             if type(nb_type)==tuple:
                                 M, aveN, J = nb_type
-                                path = "./results/multi_nbody_unetmodel_final_{}_{}_{}.pth".format(M, aveN, J)
+                                results_path = model.test_result_path
+                                inner_layers = model.inner_layers
+                                num_clusters = model.num_clusters
+                                local_hidden_layers = model.local_hidden_layers
+                                local_hidden_channels = model.local_hidden_channels
+                                inner_hidden_channels = model.inner_hidden_channels
+                                path = './results/multi_nbody_model_final_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.pth'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)
+                                torch.save(model.state_dict(), path)
+                            else:
+                                path = "./results/multi_nbody_denseunetmodel_final_temp.pth"
+                                torch.save(model.state_dict(), path)
+                        elif "UNet" in model.__class__.__name__:
+                            if type(nb_type)==tuple:
+                                M, aveN, J = nb_type
+                                out_hidden = model.hidden_channels
+                                sum_res = model.sum_res
+                                pool = int(model.pool_ratios[0] * 10)
+                                n_layers = model.n_layers
+                                depth = model.depth
+                                inner_hidden = model.inner_hidden_channels
+                                silu = model.is_clact
+                                is_normal = model.is_normal
+                                path = "./results/multi_nbody_model_final_unet_{}_{}_{}_{}layers_outhid_{}_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}.pth".format(M, aveN, J, n_layers, out_hidden, inner_hidden, sum_res, pool, depth, silu, is_normal)
                                 torch.save(model.state_dict(), path)
                             else:
                                 path = "./results/multi_nbody_unetmodel_final_temp.pth"
@@ -431,64 +718,54 @@ class Trainer:
                         else:
                             if type(nb_type)==tuple:
                                 M, aveN, J = nb_type
-                                path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
+                                out_hidden = model.hidden_features
+                                n_layers = model.n_layers
+                                path = "./results/multi_nbody_model_final_{}_{}_{}_{}layers_{}units.pth".format(M, aveN, J, out_hidden, n_layers)
                                 torch.save(model.state_dict(), path)
                             else:
                                 path = "./results/multi_nbody_model_final_temp.pth"
                                 torch.save(model.state_dict(), path)
                     elif self.data_type=="protein":
                         if "UNet" in model.__class__.__name__:
-                            path = "./results/protein_unetmodel_final_loc_innerlayer3_unit14.pth"
+                            path = "./results/protein_denseunetmodel_final_loc_innerlayer2_unit14_cat_dist_cl20_lam1_decay-8.pth"
                             torch.save(model.state_dict(), path)
                         else:
-                            path = "./results/protein_model_final_layer2_unit14.pth"
+                            path = "./results/protein_model_final_share_layer_layer4_units28.pth"
                             torch.save(model.state_dict(), path)
-
+                    elif self.data_type == "motioncap":
+                        if "Dense" in model.__class__.__name__:
+                            inner_layers = model.inner_layers
+                            num_clusters = model.num_clusters
+                            inner_hidden_channels = model.inner_hidden_channels
+                            path = "./results/motioncap_denseunet_final_loc_{}layers_cl{}_hidden{}_{}.npy".format(inner_layers, num_clusters, inner_hidden_channels, self.action)
+                            torch.save(model.state_dict(), path)
+                        elif "UNet" in model.__class__.__name__:
+                            sum_res = model.sum_res
+                            out_hidden = model.hidden_channels
+                            pool = int(model.pool_ratios[0] * 10)
+                            n_layers = model.n_layers
+                            depth = model.depth
+                            inner_hidden = model.inner_hidden_channels
+                            path = "./results/motioncap_unet_final_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}.pth".format(self.action, out_hidden, n_layers, inner_hidden, sum_res, pool, depth)
+                            torch.save(model.state_dict(), path)
+                        else:
+                            out_hidden = model.hidden_features
+                            n_layers = model.n_layers
+                            path = "./results/mocap_model_final_standard_{}_outhid_{}_{}layers.pth".format(self.action, out_hidden, n_layers)
+                            torch.save(model.state_dict(), path)
+                    elif self.data_type == "md17":
+                        if "Dense" in model.__class__.__name__:
+                            path = "./results/md17_denseunet_final_loc_innerlayer2_cl5_hidden14.pth"
+                            torch.save(model.state_dict(), path)
+                        elif "UNet" in model.__class__.__name__:
+                            path = "./results/md17_unet_final_loc_innerlayer3_unit14_ratio05.pth"
+                            torch.save(model.state_dict(), path)
+                        else:
+                            path = "./results/md17_model_final_standard.pth"
+                            torch.save(model.state_dict(), path)
+                        
                     break
 
             self.current_epoch += 1
-
-            # if False:
-            #     ### NEED to ADDRESS ###
-            #     # Once after loading a model, the training loss does not decrease
-            #     path = "./results/model_{:06d}.pth".format(self.current_epoch)
-            #     torch.save(model.state_dict(), path)
-            #     from clifford_equivariant_nn.models.nbody_cggnn import NBodyCGGNN
-            #     new_model = NBodyCGGNN()
-            #     new_model.load_state_dict(torch.load(path))
-            #     new_model = new_model.cuda()
-            #     model = new_model
-            #     model.train()
-                
-            #     print("Model Check")
-            #     # for param_tensor, new_param_tensor in zip(model.state_dict(), model.state_dict()):
-            #     #     assert torch.prod(model.state_dict()[param_tensor] == new_model.state_dict()[new_param_tensor]) == 1
-
-            if self.should_stop:
-                if self.data_type=="nbody_multi":
-                    if "UNet" in model.__class__.__name__:
-                        if type(nb_type)==tuple:
-                            M, aveN, J = nb_type
-                            path = "./results/multi_nbody_unetmodel_final_{}_{}_{}.pth".format(M, aveN, J)
-                            torch.save(model.state_dict(), path)
-                        else:
-                            path = "./results/multi_nbody_unetmodel_final_temp.pth"
-                            torch.save(model.state_dict(), path)
-                    else:
-                        if type(nb_type)==tuple:
-                            M, aveN, J = nb_type
-                            path = "./results/multi_nbody_model_final_{}_{}_{}.pth".format(M, aveN, J)
-                            torch.save(model.state_dict(), path)
-                        else:
-                            path = "./results/multi_nbody_model_final_temp.pth"
-                            torch.save(model.state_dict(), path)                
-                elif self.data_type=="protein":
-                    if "UNet" in model.__class__.__name__:
-                        path = "./results/protein_unetmodel_loc_final_innerlayer3_unit14.pth"
-                        torch.save(model.state_dict(), path)
-                    else:
-                        path = "./results/protein_model_final_layer2_unit14.pth"
-                        torch.save(model.state_dict(), path)
-        
 
 
