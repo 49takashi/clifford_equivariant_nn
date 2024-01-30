@@ -160,8 +160,9 @@ def parse_args():
                     group.add_argument(
                         f"--{k}.{k_}", default=v, type=t, help=f"Default: {v}"
                     )
-
             if len(config_dict[k]) > 0:
+                import pdb
+                pdb.set_trace()
                 raise KeyError(
                     f"Got unknown keys for {k} config: {tuple(config_dict[k].keys())}."
                 )

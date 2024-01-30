@@ -331,7 +331,8 @@ class Trainer:
                     inner_layers = model.inner_layers
                     num_clusters = model.num_clusters
                     inner_hidden_channels = model.inner_hidden_channels
-                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_{}.npy').format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                    loss_lambda = model.loss_lambda
+                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_{}_lambda_{}.npy').format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, self.action, loss_lambda), 'wb') as f:
                         np.save(f, np.array(self.test_log))
                     if not self.is_stacked:
                         self.is_stacked = True
@@ -399,6 +400,14 @@ class Trainer:
                     results_path = model.test_result_path
                     with open((results_path +'test_log_motioncap_unet_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}.npy').format(self.action, out_hidden, n_layers, inner_hidden, sum_res, pool, depth), 'wb') as f:
                         np.save(f, np.array(self.test_log))
+                elif "EGNN" in model.__class__.__name__:
+                    in_node_nf = model.in_node_nf
+                    in_edge_nf = model.in_edge_nf
+                    hidden_nf = model.hidden_nf
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    with open((results_path +'test_log_motioncap_EGNN_{}_ndnf_{}_ednf_{}_hdnf_{}_layers_{}.npy').format(self.action, in_node_nf, in_edge_nf, hidden_nf, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
                 else:
                     out_hidden = model.hidden_features
                     n_layers = model.n_layers
@@ -460,7 +469,8 @@ class Trainer:
                     inner_hidden_channels = model.inner_hidden_channels
                     local_hidden_channels = model.local_hidden_channels
                     local_hidden_layers = model.local_hidden_layers
-                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)), 'wb') as f:
+                    loss_lambda = model.loss_lambda
+                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda)), 'wb') as f:
                         np.save(f, np.array(self.test_log))
                     if not self.is_stacked:
                         self.is_stacked = True
@@ -487,7 +497,7 @@ class Trainer:
                     is_normal = model.is_normal
                     if not os.path.exists(results_path):
                         os.makedirs(results_path)
-                    with open((results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal), 'wb') as f:
+                    with open((results_path + 'test_log_motioncap_denseunet_{}layers_cl{}_hidden{}_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
                         np.save(f, np.array(self.test_log))   
                 else:    
                     M, aveN, J = self.nb_type
@@ -503,13 +513,16 @@ class Trainer:
                 if "Dense" in model.__class__.__name__:
                     results_path = model.test_result_path
                     inner_layers = model.inner_layers
+                    out_hidden = model.out_channels
                     num_clusters = model.num_clusters
                     inner_hidden_channels = model.inner_hidden_channels
                     local_hidden_channels = model.local_hidden_channels
                     local_hidden_layers = model.local_hidden_layers
+                    hard_assignment = model.hard_assignment
+                    skip_interupdate = model.skip_interupdate
                     if not os.path.exists(results_path):
                         os.makedirs(results_path)                    
-                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)), 'wb') as f:
+                    with open((results_path + 'test_log_motioncap_denseunet_{}_{}layers_{}units_cluster_{}_lochid_{}_loclay_{}_hardS_{}_skipin_{}.npy').format(self.action, inner_layers, inner_hidden_channels, num_clusters, local_hidden_channels, local_hidden_layers, hard_assignment, skip_interupdate), 'wb') as f:
                         np.save(f, np.array(self.test_log))
                     if not self.is_stacked:
                         self.is_stacked = True
@@ -521,7 +534,7 @@ class Trainer:
                             self.stack_adjacent, 
                             torch.stack((adjs[0][0].detach().cpu(), adjs[1][0].detach().cpu()), dim=-1).numpy()
                         ), axis=-1)    
-                    with open((results_path + 'test_adj_motioncap_denseunet_{}layers_cl{}_hidden{}_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                    with open((results_path + 'test_adj_motioncap_denseunet_{}layers_cl{}_hidden{}_{}_hardS_{}_skipin_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action, hard_assignment, skip_interupdate), 'wb') as f:
                         np.save(f, self.stack_adjacent)
                 elif "UNet" in model.__class__.__name__:    
                     sum_res = model.sum_res
@@ -534,6 +547,16 @@ class Trainer:
                     if not os.path.exists(results_path):
                         os.makedirs(results_path)
                     with open((results_path +'test_log_motioncap_unet_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}.npy').format(self.action, out_hidden, n_layers, inner_hidden, sum_res, pool, depth), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
+                elif "EGNN" in model.__class__.__name__:
+                    in_node_nf = model.in_node_nf
+                    in_edge_nf = model.in_edge_nf
+                    hidden_nf = model.hidden_nf
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
+                    with open((results_path +'test_log_motioncap_EGNN_{}_ndnf_{}_ednf_{}_hdnf_{}_layers_{}.npy').format(self.action, in_node_nf, in_edge_nf, hidden_nf, n_layers), 'wb') as f:
                         np.save(f, np.array(self.test_log))
                 else:
                     out_hidden = model.hidden_features
@@ -603,6 +626,8 @@ class Trainer:
         self.nb_type = nb_type
         if hasattr(model, "device"):
             device = model.device
+            if type(device) == str:
+                device = next(model.parameters()).device
         else:
             device = next(model.parameters()).device
         self.device = device
@@ -694,7 +719,8 @@ class Trainer:
                                 local_hidden_layers = model.local_hidden_layers
                                 local_hidden_channels = model.local_hidden_channels
                                 inner_hidden_channels = model.inner_hidden_channels
-                                path = './results/multi_nbody_model_final_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}.pth'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)
+                                loss_lambda = model.loss_lambda
+                                path = './results/multi_nbody_model_final_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}.pth'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda)
                                 torch.save(model.state_dict(), path)
                             else:
                                 path = "./results/multi_nbody_denseunetmodel_final_temp.pth"
@@ -737,7 +763,9 @@ class Trainer:
                             inner_layers = model.inner_layers
                             num_clusters = model.num_clusters
                             inner_hidden_channels = model.inner_hidden_channels
-                            path = "./results/motioncap_denseunet_final_loc_{}layers_cl{}_hidden{}_{}.npy".format(inner_layers, num_clusters, inner_hidden_channels, self.action)
+                            local_hidden_layers = model.local_hidden_layers
+                            local_hidden_channels = model.local_hidden_channels
+                            path = "./results/motioncap_denseunet_final_{}_{}layers_cl{}_hidden{}_loclay_{}_locf_{}.npy".format(self.action, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)
                             torch.save(model.state_dict(), path)
                         elif "UNet" in model.__class__.__name__:
                             sum_res = model.sum_res
@@ -747,6 +775,13 @@ class Trainer:
                             depth = model.depth
                             inner_hidden = model.inner_hidden_channels
                             path = "./results/motioncap_unet_final_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}.pth".format(self.action, out_hidden, n_layers, inner_hidden, sum_res, pool, depth)
+                            torch.save(model.state_dict(), path)
+                        elif "EGNN" in model.__class__.__name__:
+                            in_node_nf = model.in_node_nf
+                            in_edge_nf = model.in_edge_nf
+                            hidden_nf = model.hidden_nf
+                            n_layers = model.n_layers
+                            path = './results/test_log_motioncap_EGNN_{}_ndnf_{}_ednf_{}_hdnf_{}_layers_{}.pth'.format(self.action, in_node_nf, in_edge_nf, hidden_nf, n_layers)
                             torch.save(model.state_dict(), path)
                         else:
                             out_hidden = model.hidden_features
