@@ -470,7 +470,9 @@ class Trainer:
                     local_hidden_channels = model.local_hidden_channels
                     local_hidden_layers = model.local_hidden_layers
                     loss_lambda = model.loss_lambda
-                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda)), 'wb') as f:
+                    hard_assignment = model.hard_assignment
+                    skip_interupdate = model.skip_interupdate
+                    with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}_hardS_{}_skipin_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda, hard_assignment, skip_interupdate)), 'wb') as f:
                         np.save(f, np.array(self.test_log))
                     if not self.is_stacked:
                         self.is_stacked = True
@@ -720,7 +722,10 @@ class Trainer:
                                 local_hidden_channels = model.local_hidden_channels
                                 inner_hidden_channels = model.inner_hidden_channels
                                 loss_lambda = model.loss_lambda
-                                path = './results/multi_nbody_model_final_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}.pth'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda)
+                                hard_assignment = model.hard_assignment
+                                skip_interupdate = model.skip_interupdate
+
+                                path = './results/multi_nbody_model_final_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}_hardS_{}_skipin_{}.pth'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda, hard_assignment, skip_interupdate)
                                 torch.save(model.state_dict(), path)
                             else:
                                 path = "./results/multi_nbody_denseunetmodel_final_temp.pth"
