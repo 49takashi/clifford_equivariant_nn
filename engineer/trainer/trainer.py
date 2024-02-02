@@ -472,6 +472,8 @@ class Trainer:
                     loss_lambda = model.loss_lambda
                     hard_assignment = model.hard_assignment
                     skip_interupdate = model.skip_interupdate
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
                     with open((results_path + 'test_log_nbody_denseunet_{}_{}_{}_{}layers_cl{}_hidden{}_loclay_{}_locchan_{}_lambda_{}_hardS_{}_skipin_{}.npy'.format(M, aveN, J, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels, loss_lambda, hard_assignment, skip_interupdate)), 'wb') as f:
                         np.save(f, np.array(self.test_log))
                     if not self.is_stacked:
@@ -497,9 +499,10 @@ class Trainer:
                     results_path = model.test_result_path
                     silu = model.is_clact
                     is_normal = model.is_normal
+                    use_skipconn = model.use_skipconn
                     if not os.path.exists(results_path):
                         os.makedirs(results_path)
-                    with open((results_path + 'test_log_motioncap_denseunet_{}layers_cl{}_hidden{}_{}.npy').format(inner_layers, num_clusters, inner_hidden_channels, self.action), 'wb') as f:
+                    with open(( results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn), 'wb') as f:
                         np.save(f, np.array(self.test_log))   
                 else:    
                     M, aveN, J = self.nb_type
@@ -741,7 +744,8 @@ class Trainer:
                                 inner_hidden = model.inner_hidden_channels
                                 silu = model.is_clact
                                 is_normal = model.is_normal
-                                path = "./results/multi_nbody_model_final_unet_{}_{}_{}_{}layers_outhid_{}_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}.pth".format(M, aveN, J, n_layers, out_hidden, inner_hidden, sum_res, pool, depth, silu, is_normal)
+                                use_skipconn = model.use_skipconn
+                                path = "./results/multi_nbody_model_final_unet_{}_{}_{}_{}layers_outhid_{}_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}.pth".format(M, aveN, J, n_layers, out_hidden, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn)
                                 torch.save(model.state_dict(), path)
                             else:
                                 path = "./results/multi_nbody_unetmodel_final_temp.pth"
