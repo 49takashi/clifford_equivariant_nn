@@ -220,6 +220,7 @@ class Trainer:
 
         batch = to_device(batch, self.device)
 
+        # pdb.set_trace()
         if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
             loss, mse_loss, mse_outputs = model.loss_after_forward(batch, self.global_step)
         # elif "NBodyCGGNN" in model.__class__.__name__:
@@ -774,7 +775,7 @@ class Trainer:
                             inner_hidden_channels = model.inner_hidden_channels
                             local_hidden_layers = model.local_hidden_layers
                             local_hidden_channels = model.local_hidden_channels
-                            path = "./results/motioncap_denseunet_final_{}_{}layers_cl{}_hidden{}_loclay_{}_locf_{}.npy".format(self.action, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)
+                            path = "./results/motioncap_denseunet_final_{}_{}layers_cl{}_hidden{}_loclay_{}_locf_{}.pth".format(self.action, inner_layers, num_clusters, inner_hidden_channels, local_hidden_layers, local_hidden_channels)
                             torch.save(model.state_dict(), path)
                         elif "UNet" in model.__class__.__name__:
                             sum_res = model.sum_res
@@ -807,7 +808,7 @@ class Trainer:
                         else:
                             path = "./results/md17_model_final_standard.pth"
                             torch.save(model.state_dict(), path)
-                        
+                            
                     break
 
             self.current_epoch += 1
