@@ -188,7 +188,11 @@ class Trainer:
         self.print_interval = print_interval
         self.log_interval = log_interval
         self.test_only = test_only
-        assert data_type in ["nbody_multi", "protein", "motioncap", "md17"]
+        self.test_best = torch.tensor(float('inf'))
+        assert data_type in ["nbody_multi", "protein", "motioncap", "md17", "nbody"]
+        if data_type == "nbody":
+            self.results_path = "./results_nbody/"
+                
         self.data_type = data_type
         if data_type == "motioncap":
             assert action in ["run", "walk"]
@@ -206,6 +210,7 @@ class Trainer:
         self.should_test = False
         self.device = None
 
+        self.train_log = []
         self.test_log = []
 
     def _add_prefix(
@@ -225,6 +230,8 @@ class Trainer:
             loss, mse_loss, mse_outputs = model.loss_after_forward(batch, self.global_step)
         # elif "NBodyCGGNN" in model.__class__.__name__:
         #     loss, mse_outputs = model.forward(batch, self.global_step)
+        elif self.data_type == "nbody":
+            loss, mse_outputs = model(batch, self.global_step)
         else:    
             loss, mse_outputs = model.loss_after_forward(batch, self.global_step)
             # print(loss)
@@ -242,10 +249,36 @@ class Trainer:
             model.train_metrics.update(**mse_outputs)
 
         if self.global_step % self.print_interval == 0:
-            if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
-                print(f"Step: {self.global_step} (Training) FrobeniusLoss: {loss:.4f} MSELoss: {mse_loss:.4f}")
-            else:    
-                print(f"Step: {self.global_step} (Training) MSELoss: {loss:.4f}")
+            # metrics = model.train_metrics.compute()
+            self.train_log.append(loss.detach().cpu().numpy())
+            if self.data_type == "nbody":
+                if not os.path.exists(self.results_path):
+                    os.makedirs(self.results_path)
+                with open(self.results_path + "train_log_nbody.npy", 'wb') as f:
+                    np.save(f, np.array(self.train_log))
+                
+            else:
+                M, aveN, J = self.nb_type
+                sum_res = model.sum_res
+                out_hidden = model.hidden_channels
+                pool = int(model.pool_ratios[0] * 10)
+                n_layers = model.n_layers
+                depth = model.depth
+                inner_hidden = model.inner_hidden_channels
+                results_path = model.test_result_path
+                silu = model.is_clact
+                is_normal = model.is_normal
+                use_skipconn = model.use_skipconn
+                all_norm = model.all_norm
+                normalization_init = model.normalization_init
+                if not os.path.exists(results_path):
+                    os.makedirs(results_path)
+                with open(( results_path +'train_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}_allnorm_{}_normalinit_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn, all_norm, normalization_init), 'wb') as f:
+                    np.save(f, np.array(self.train_log))
+                if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
+                    print(f"Step: {self.global_step} (Training) FrobeniusLoss: {loss:.4f} MSELoss: {mse_loss:.4f}")
+                else:    
+                    print(f"Step: {self.global_step} (Training) MSELoss: {loss:.4f}")
 
     @torch.no_grad()
     def test_loop(
@@ -255,6 +288,11 @@ class Trainer:
         test_loader: DataLoader,
         validation=False,
     ):
+        if torch.isinf(self.test_best):
+            for data in test_loader:
+                break
+            self.test_best = self.test_best.to(data[0].device)
+
         model.eval()
 
         num_iterations = int(min(len(test_loader), self.limit_val_batches))
@@ -280,8 +318,13 @@ class Trainer:
             if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):
                 eval_loss, eval_outputs, adjs = model.eval_after_forward(batch, batch_idx)
                 loss, _, _ = model.loss_after_forward(batch, batch_idx)
-            else:    
-                loss, outputs = model.loss_after_forward(batch, batch_idx)
+            elif self.data_type == "nbody":
+                loss, outputs = model(batch, self.global_step)
+            else:
+                if ("MultiNBodyCGGNN" in model.__class__.__name__ and self.data_type == "nbody_multi"):
+                    loss, outputs = model.loss_after_forward(batch, batch_idx, is_test=True)
+                else:
+                    loss, outputs = model.loss_after_forward(batch, batch_idx)
 
             if "Dense" in model.__class__.__name__ and (self.data_type == "protein" or self.data_type == "motioncap" or "nbody_multi"):       
                 if self.is_distributed:
@@ -361,6 +404,14 @@ class Trainer:
                         os.makedirs(results_path)
                     with open( ( results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal), 'wb') as f:
                         np.save(f, np.array(self.test_log))   
+                elif "EGNN" in model.__class__.__name__:
+                    in_node_nf = model.in_node_nf
+                    in_edge_nf = model.in_edge_nf
+                    hidden_nf = model.hidden_nf
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    with open((results_path +'test_log_nbody_EGNN_{}_ndnf_{}_ednf_{}_hdnf_{}_layers_{}.npy').format(self.action, in_node_nf, in_edge_nf, hidden_nf, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
                 else:    
                     M, aveN, J = self.nb_type
                     out_hidden = model.hidden_features
@@ -501,10 +552,22 @@ class Trainer:
                     silu = model.is_clact
                     is_normal = model.is_normal
                     use_skipconn = model.use_skipconn
+                    all_norm = model.all_norm
+                    normalization_init = model.normalization_init
                     if not os.path.exists(results_path):
                         os.makedirs(results_path)
-                    with open(( results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn), 'wb') as f:
+                    with open(( results_path +'test_log_nbody_unet_{}_{}_{}_outhid_{}_{}layers_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}_allnorm_{}_normalinit_{}.npy').format(M, aveN, J, out_hidden, n_layers, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn, all_norm, normalization_init), 'wb') as f:
                         np.save(f, np.array(self.test_log))   
+                elif "EGNN" in model.__class__.__name__:
+                    in_node_nf = model.in_node_nf
+                    in_edge_nf = model.in_edge_nf
+                    hidden_nf = model.hidden_nf
+                    n_layers = model.n_layers
+                    results_path = model.test_result_path
+                    if not os.path.exists(results_path):
+                        os.makedirs(results_path)
+                    with open((results_path +'test_log_nbody_EGNN_ndnf_{}_ednf_{}_hdnf_{}_layers_{}.npy').format(in_node_nf, in_edge_nf, hidden_nf, n_layers), 'wb') as f:
+                        np.save(f, np.array(self.test_log))
                 else:    
                     M, aveN, J = self.nb_type
                     out_hidden = model.hidden_features
@@ -595,6 +658,20 @@ class Trainer:
                 else:
                     with open('test_log_md17_standard.npy', 'wb') as f:
                         np.save(f, np.array(self.test_log)) 
+            elif self.data_type == "nbody":
+                out_hidden = model.hidden_features
+                n_layers = model.n_layers
+                results_path = self.results_path
+                if not os.path.exists(results_path):
+                    os.makedirs(results_path)                    
+                with open( ( results_path +'test_log_nbody_standard_outhid_{}_{}layers.npy').format(out_hidden, n_layers), 'wb') as f:
+                    np.save(f, np.array(self.test_log))  
+                    
+                if metrics['loss'] <= self.test_best:
+                    self.test_best = metrics['loss']
+                    torch.save(model.state_dict(), "./results/nbody_model_final_standard.pt")
+                    
+            
             model.test_metrics.reset()
         metrics[f"s_it"] = s_it
 
@@ -691,6 +768,7 @@ class Trainer:
                     last_global_step = self.global_step
 
                 if self.global_step % self.val_check_interval == 0:
+                    # print("model.train_metrics: ", model.train_metrics.metrics["loss"].collection)
                     if val_loader is not None and self.limit_val_batches > 0:
                         with torch.no_grad():
                             self.test_loop(
@@ -700,7 +778,8 @@ class Trainer:
                     t0 = time.time()
                     last_global_step = self.global_step
 
-                    if self.should_test:
+                    # if self.should_test:
+                    if True:
                         if test_loader is not None:
                             with torch.no_grad():
                                 self.test_loop(
@@ -746,11 +825,20 @@ class Trainer:
                                 silu = model.is_clact
                                 is_normal = model.is_normal
                                 use_skipconn = model.use_skipconn
-                                path = "./results/multi_nbody_model_final_unet_{}_{}_{}_{}layers_outhid_{}_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}.pth".format(M, aveN, J, n_layers, out_hidden, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn)
+                                all_norm = model.all_norm
+                                normalization_init = model.normalization_init
+                                path = "./results/multi_nbody_model_final_unet_{}_{}_{}_{}layers_outhid_{}_{}units_sumres_{}_pool_{}_depth_{}_silu_{}_normal_{}_skip_{}_allnorm_{}_normalinit_{}.pth".format(M, aveN, J, n_layers, out_hidden, inner_hidden, sum_res, pool, depth, silu, is_normal, use_skipconn, all_norm, normalization_init)
                                 torch.save(model.state_dict(), path)
                             else:
                                 path = "./results/multi_nbody_unetmodel_final_temp.pth"
                                 torch.save(model.state_dict(), path)
+                        elif "EGNN" in model.__class__.__name__:
+                            in_node_nf = model.in_node_nf
+                            in_edge_nf = model.in_edge_nf
+                            hidden_nf = model.hidden_nf
+                            n_layers = model.n_layers
+                            path = './results/test_log_nbody_EGNN_ndnf_{}_ednf_{}_hdnf_{}_layers_{}.pth'.format(in_node_nf, in_edge_nf, hidden_nf, n_layers)
+                            torch.save(model.state_dict(), path)
                         else:
                             if type(nb_type)==tuple:
                                 M, aveN, J = nb_type

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch.utils import data
 
+import pdb
 
 class NBodyDataset:
     """
@@ -13,7 +14,7 @@ class NBodyDataset:
     """
 
     def __init__(
-        self, partition="train", max_samples=1e8, dataset_name="se3_transformer"
+        self, partition="train", max_samples=1e8, dataset_name="se3_transformer", dataroot=None,
     ):
         self.partition = partition
         if self.partition == "val":
@@ -27,13 +28,15 @@ class NBodyDataset:
             self.sufix += "_charged5_initvel1small"
         else:
             raise Exception("Wrong dataset name %s" % self.dataset_name)
-
+        if dataroot != None:
+            self.dataroot = dataroot
+        else:
+            self.dataroot = os.environ["DATAROOT"]
         self.max_samples = int(max_samples)
         self.dataset_name = dataset_name
-        self.data, self.edges = self.load()
+        self.data, self.edges = self.load(self.dataroot)
 
-    def load(self):
-        dataroot = os.environ["DATAROOT"]
+    def load(self, dataroot):
         # loc = np.load('n_body_system/dataset/loc_' + self.sufix + '.npy')
         loc = np.load(dataroot + "/nbody/loc_" + self.sufix + ".npy")
         # vel = np.load('n_body_system/dataset/vel_' + self.sufix + '.npy')
@@ -141,16 +144,16 @@ class NBodyDataset:
 
 
 class NBody:
-    def __init__(self, num_samples=3000, batch_size=100):
+    def __init__(self, num_samples=3000, batch_size=100, dataroot=None,):
         self.train_dataset = NBodyDataset(
-            partition="train", max_samples=num_samples, dataset_name="nbody_small"
+            partition="train", max_samples=num_samples, dataset_name="nbody_small", dataroot=dataroot,
         )
         self.valid_dataset = NBodyDataset(
-            partition="val", max_samples=num_samples, dataset_name="nbody_small"
+            partition="val", max_samples=num_samples, dataset_name="nbody_small", dataroot=dataroot,
         )
 
         self.test_dataset = NBodyDataset(
-            partition="test", max_samples=num_samples, dataset_name="nbody_small"
+            partition="test", max_samples=num_samples, dataset_name="nbody_small", dataroot=dataroot,
         )
 
         self.batch_size = batch_size
